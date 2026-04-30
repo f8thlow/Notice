@@ -2,18 +2,47 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
   CalendarDays,
-  ChevronLeft,
-  ChevronRight,
   Folder,
   Heart,
   Home,
   ImagePlus,
-  RotateCcw,
   Sparkles,
   Trash2,
+  Users,
   X,
 } from "lucide-react";
 import "./App.css";
+
+function Media({ moment, className = "", mode = "cover", autoPlay = true }) {
+  if (!moment) return null;
+
+  const isVideo = moment.mediaType === "video";
+
+  if (isVideo) {
+    return (
+      <video
+        src={moment.image}
+        className={className}
+        autoPlay={autoPlay}
+        muted
+        loop
+        playsInline
+        controls={false}
+        style={{ objectFit: mode }}
+      />
+    );
+  }
+
+  return (
+    <img
+      src={moment.image}
+      alt="Memory"
+      className={className}
+      draggable="false"
+      style={{ objectFit: mode }}
+    />
+  );
+}
 
 function App() {
   const today = new Date().getDate();
@@ -22,157 +51,265 @@ function App() {
   const [photos, setPhotos] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [savedMoments, setSavedMoments] = useState([]);
-  const [history, setHistory] = useState([]);
   const [pendingMoment, setPendingMoment] = useState(null);
 
-  const [note, setNote] = useState("");
-  const [treasured, setTreasured] = useState(false);
-  const [showFolderInput, setShowFolderInput] = useState(false);
+  const [friendName, setFriendName] = useState("");
+  const [newFriendName, setNewFriendName] = useState("");
+  const [shareWithFriend, setShareWithFriend] = useState(true);
+
   const [folderName, setFolderName] = useState("");
+  const [newFolderName, setNewFolderName] = useState("");
+  const [treasured, setTreasured] = useState(false);
+
+  const [manualFriends, setManualFriends] = useState([]);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteFriendName, setInviteFriendName] = useState("");
+  const [selectedFriend, setSelectedFriend] = useState("");
+  const [peopleTab, setPeopleTab] = useState("with");
+  const [editingFriendName, setEditingFriendName] = useState(false);
+  const [friendNameDraft, setFriendNameDraft] = useState("");
+  const [peopleMontageIndex, setPeopleMontageIndex] = useState(0);
+
+  const [openMoment, setOpenMoment] = useState(null);
+  const [captionDraft, setCaptionDraft] = useState("");
+
+  const [recapMode, setRecapMode] = useState("weekly");
+  const [recapFolderOnly, setRecapFolderOnly] = useState(false);
+  const [recapHeartOnly, setRecapHeartOnly] = useState(false);
+  const [recapIndex, setRecapIndex] = useState(0);
+  const [recapCaption, setRecapCaption] = useState("This week in quiet moments");
+  const [recapDescription, setRecapDescription] = useState(
+    "A small collection of memories worth keeping."
+  );
+
+  const [reviewRecapPlaying, setReviewRecapPlaying] = useState(false);
+  const [reviewRecapDone, setReviewRecapDone] = useState(false);
+  const [reviewRecapIndex, setReviewRecapIndex] = useState(0);
+
+  const [selectedDay, setSelectedDay] = useState(today);
+  const [archiveIndex, setArchiveIndex] = useState(0);
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [calendarTouchStart, setCalendarTouchStart] = useState(null);
+  const [calendarPickerOpen, setCalendarPickerOpen] = useState(false);
 
   const [startX, setStartX] = useState(null);
   const [dragX, setDragX] = useState(0);
 
-  const [loading, setLoading] = useState(false);
-  const [fadeOut, setFadeOut] = useState(false);
-  const [flashIndex, setFlashIndex] = useState(0);
-
-  const [dailyRecapMade, setDailyRecapMade] = useState(false);
-  const [previewPhotos, setPreviewPhotos] = useState([]);
-
-  const [recapMode, setRecapMode] = useState("weekly");
-  const [recapIndex, setRecapIndex] = useState(0);
-  const [recapView, setRecapView] = useState("video");
-
-  const [selectedDay, setSelectedDay] = useState(today);
-  const [archiveIndex, setArchiveIndex] = useState(0);
-
   const currentPhoto = photos[currentIndex];
   const finishedReview = photos.length > 0 && currentIndex >= photos.length;
 
-  const todayMoments = useMemo(() => {
-    return savedMoments.filter((moment) => {
-      const date = new Date(moment.createdAt);
-      return date.getDate() === today;
+  const existingFriends = useMemo(() => {
+    return [
+      ...new Set(
+        savedMoments
+          .map((moment) => moment.friend)
+          .filter(Boolean)
+          .map((name) => name.trim())
+      ),
+    ].sort((a, b) => a.localeCompare(b));
+  }, [savedMoments]);
+
+  const existingFolders = useMemo(() => {
+    return [
+      ...new Set(
+        savedMoments
+          .map((moment) => moment.folder)
+          .filter(Boolean)
+          .map((name) => name.trim())
+      ),
+    ].sort((a, b) => a.localeCompare(b));
+  }, [savedMoments]);
+
+  const people = useMemo(() => {
+    const grouped = {};
+
+    manualFriends.forEach((friend) => {
+      if (!grouped[friend]) grouped[friend] = [];
     });
-  }, [savedMoments, today]);
+
+    savedMoments.forEach((moment) => {
+      if (!moment.friend) return;
+      if (!grouped[moment.friend]) grouped[moment.friend] = [];
+      grouped[moment.friend].push(moment);
+    });
+
+    return grouped;
+  }, [savedMoments, manualFriends]);
 
   const recapMoments = useMemo(() => {
     const now = new Date();
 
-    if (recapMode === "weekly") {
-      return savedMoments.filter((moment) => {
+    let filtered = savedMoments.filter((moment) => {
+      const savedDate = new Date(moment.savedAt || moment.createdAt);
+
+      if (recapMode === "weekly") {
         const diff =
-          (now.getTime() - new Date(moment.createdAt).getTime()) /
-          (1000 * 60 * 60 * 24);
+          (now.getTime() - savedDate.getTime()) / (1000 * 60 * 60 * 24);
         return diff <= 7;
-      });
+      }
+
+      if (recapMode === "monthly") {
+        return (
+          savedDate.getMonth() === now.getMonth() &&
+          savedDate.getFullYear() === now.getFullYear()
+        );
+      }
+
+      if (recapMode === "yearly") {
+        return savedDate.getFullYear() === now.getFullYear();
+      }
+
+      return true;
+    });
+
+    if (recapFolderOnly) {
+      filtered = filtered.filter((moment) => moment.folder);
     }
 
-    return savedMoments.filter((moment) => {
-      const date = new Date(moment.createdAt);
-      return (
-        date.getMonth() === now.getMonth() &&
-        date.getFullYear() === now.getFullYear()
-      );
-    });
-  }, [savedMoments, recapMode]);
+    if (recapHeartOnly) {
+      filtered = filtered.filter((moment) => moment.treasured);
+    }
 
-  const treasuredMoments = useMemo(() => {
-    return savedMoments.filter((moment) => moment.treasured);
-  }, [savedMoments]);
-
-  const folders = useMemo(() => {
-    const grouped = {};
-
-    savedMoments.forEach((moment) => {
-      const folder = moment.folder || "uncategorized";
-      if (!grouped[folder]) grouped[folder] = [];
-      grouped[folder].push(moment);
-    });
-
-    return grouped;
-  }, [savedMoments]);
+    return filtered;
+  }, [savedMoments, recapMode, recapFolderOnly, recapHeartOnly]);
 
   const archiveMoments = useMemo(() => {
     return savedMoments.filter((moment) => {
       const date = new Date(moment.createdAt);
-      return date.getDate() === selectedDay;
+      return (
+        date.getDate() === selectedDay &&
+        date.getMonth() === calendarMonth.getMonth() &&
+        date.getFullYear() === calendarMonth.getFullYear()
+      );
     });
-  }, [savedMoments, selectedDay]);
+  }, [savedMoments, selectedDay, calendarMonth]);
 
-  const activeArchiveMoment =
-    archiveMoments.length > 0
-      ? archiveMoments[archiveIndex % archiveMoments.length]
-      : null;
+  const selectedFriendMoments = selectedFriend ? people[selectedFriend] || [] : [];
+  const sharedFriendMoments = selectedFriendMoments.filter(
+    (moment) => moment.shared
+  );
+  const visiblePeopleMoments =
+    peopleTab === "shared" ? sharedFriendMoments : selectedFriendMoments;
+  const montageMoments =
+    sharedFriendMoments.length > 0 ? sharedFriendMoments : selectedFriendMoments;
 
-  const homePreviewImages =
-    todayMoments.length > 0
-      ? todayMoments
-      : previewPhotos.length > 0
-        ? previewPhotos
-        : [];
+  const calendarMonthLabel = calendarMonth.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
 
-  const homePreviewImage =
-    homePreviewImages.length > 0 ? homePreviewImages[0].image : null;
-
-  useEffect(() => {
-    if (!loading) return;
-
-    const flashSource =
-      todayMoments.length > 0
-        ? todayMoments
-        : previewPhotos.length > 0
-          ? previewPhotos
-          : [];
-
-    if (flashSource.length === 0) {
-      setLoading(false);
-      setDailyRecapMade(true);
-      setPage("recap");
-      return;
-    }
-
-    const flashTimer = setInterval(() => {
-      setFlashIndex((current) => (current + 1) % flashSource.length);
-    }, 900);
-
-    const fadeTimer = setTimeout(() => {
-      setFadeOut(true);
-    }, 1600);
-
-    const finishTimer = setTimeout(() => {
-      clearInterval(flashTimer);
-      setLoading(false);
-      setFadeOut(false);
-      setDailyRecapMade(true);
-      setPage("recap");
-      setRecapMode("weekly");
-      setRecapView("video");
-      setRecapIndex(0);
-      setPhotos([]);
-      setCurrentIndex(0);
-      setPendingMoment(null);
-    }, 2400);
-
-    return () => {
-      clearInterval(flashTimer);
-      clearTimeout(fadeTimer);
-      clearTimeout(finishTimer);
-    };
-  }, [loading, todayMoments, previewPhotos]);
+  const daysInCalendarMonth = new Date(
+    calendarMonth.getFullYear(),
+    calendarMonth.getMonth() + 1,
+    0
+  ).getDate();
 
   useEffect(() => {
     if (page !== "recap") return;
-    if (recapView !== "video") return;
     if (recapMoments.length === 0) return;
 
-    const videoTimer = setInterval(() => {
+    const timer = setInterval(() => {
       setRecapIndex((current) => (current + 1) % recapMoments.length);
-    }, 1000);
+    }, 700);
 
-    return () => clearInterval(videoTimer);
-  }, [page, recapView, recapMoments.length]);
+    return () => clearInterval(timer);
+  }, [page, recapMoments.length]);
+
+  useEffect(() => {
+    if (page !== "archive") return;
+    if (archiveMoments.length <= 1) return;
+
+    const timer = setInterval(() => {
+      setArchiveIndex((current) => (current + 1) % archiveMoments.length);
+    }, 700);
+
+    return () => clearInterval(timer);
+  }, [page, archiveMoments.length]);
+
+  useEffect(() => {
+    if (page !== "people") return;
+    if (peopleTab !== "montage") return;
+    if (montageMoments.length <= 1) return;
+
+    const timer = setInterval(() => {
+      setPeopleMontageIndex((current) => (current + 1) % montageMoments.length);
+    }, 700);
+
+    return () => clearInterval(timer);
+  }, [page, peopleTab, montageMoments.length]);
+
+  useEffect(() => {
+    if (!reviewRecapPlaying) return;
+    if (savedMoments.length === 0) {
+      setReviewRecapPlaying(false);
+      setReviewRecapDone(true);
+      return;
+    }
+
+    setReviewRecapIndex(0);
+
+    const timer = setInterval(() => {
+      setReviewRecapIndex((current) => {
+        if (current >= savedMoments.length - 1) {
+          clearInterval(timer);
+          setTimeout(() => {
+            setReviewRecapPlaying(false);
+            setReviewRecapDone(true);
+          }, 700);
+          return current;
+        }
+
+        return current + 1;
+      });
+    }, 700);
+
+    return () => clearInterval(timer);
+  }, [reviewRecapPlaying, savedMoments.length]);
+
+  function shiftCalendarMonth(direction) {
+    setCalendarMonth(
+      (current) =>
+        new Date(current.getFullYear(), current.getMonth() + direction, 1)
+    );
+    setSelectedDay(1);
+    setArchiveIndex(0);
+  }
+
+  function handleCalendarWheel(event) {
+    if (Math.abs(event.deltaY) < 30) return;
+    shiftCalendarMonth(event.deltaY > 0 ? 1 : -1);
+  }
+
+  function handleCalendarTouchStart(event) {
+    setCalendarTouchStart(event.touches[0].clientX);
+  }
+
+  function handleCalendarTouchEnd(event) {
+    if (calendarTouchStart === null) return;
+
+    const endX = event.changedTouches[0].clientX;
+    const diff = endX - calendarTouchStart;
+
+    if (Math.abs(diff) > 50) {
+      shiftCalendarMonth(diff < 0 ? 1 : -1);
+    }
+
+    setCalendarTouchStart(null);
+  }
+
+  function formatDate(isoDate) {
+    return new Date(isoDate).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  }
+
+  function getMediaType(file) {
+    if (file.type?.startsWith("video/")) return "video";
+    if (file.name?.toLowerCase().endsWith(".mov")) return "video";
+    if (file.name?.toLowerCase().endsWith(".mp4")) return "video";
+    return "image";
+  }
 
   function handlePhotoReview(event) {
     const files = Array.from(event.target.files || []);
@@ -184,165 +321,70 @@ function App() {
         return {
           id: `${Date.now()}-${index}`,
           image: URL.createObjectURL(file),
+          mediaType: getMediaType(file),
           createdAt: photoDate.toISOString(),
-          time: photoDate.toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-          }),
-          scene: "today",
           originalFileName: file.name,
         };
       })
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     setPhotos(reviewedPhotos);
-    setPreviewPhotos(reviewedPhotos);
     setCurrentIndex(0);
     setPendingMoment(null);
-    setHistory([]);
-    setNote("");
+    setFriendName("");
+    setNewFriendName("");
+    setShareWithFriend(true);
     setFolderName("");
-    setShowFolderInput(false);
+    setNewFolderName("");
     setTreasured(false);
-    setDailyRecapMade(false);
+    setReviewRecapPlaying(false);
+    setReviewRecapDone(false);
+    setReviewRecapIndex(0);
   }
 
   function skipPhoto() {
-    if (!currentPhoto) return;
-
-    setHistory((current) => [
-      ...current,
-      {
-        type: "skip",
-        index: currentIndex,
-        photo: currentPhoto,
-      },
-    ]);
-
+    setPendingMoment(null);
     setCurrentIndex((current) => current + 1);
     setDragX(0);
-  }
-
-  function removeCurrentPhotoFromReview() {
-    if (!currentPhoto) return;
-
-    setHistory((current) => [
-      ...current,
-      {
-        type: "trash",
-        index: currentIndex,
-        photo: currentPhoto,
-      },
-    ]);
-
-    setPhotos((current) =>
-      current.filter((photo) => photo.id !== currentPhoto.id)
-    );
-
-    setPreviewPhotos((current) =>
-      current.filter((photo) => photo.id !== currentPhoto.id)
-    );
-
-    setDragX(0);
+    setStartX(null);
   }
 
   function keepPhoto() {
     if (!currentPhoto) return;
 
     setPendingMoment(currentPhoto);
-    setNote("");
-    setTreasured(false);
-    setFolderName("");
-    setShowFolderInput(false);
     setDragX(0);
+    setStartX(null);
+    setFriendName("");
+    setNewFriendName("");
+    setShareWithFriend(true);
   }
 
   function savePendingMoment() {
     if (!pendingMoment) return;
 
+    const finalFriend =
+      friendName === "__new__" ? newFriendName.trim() : friendName.trim();
+
+    const finalFolder =
+      folderName === "__new__" ? newFolderName.trim() : folderName.trim();
+
     const saved = {
       ...pendingMoment,
-      note,
+      savedAt: new Date().toISOString(),
+      friend: finalFriend,
+      shared: Boolean(finalFriend && shareWithFriend),
       treasured,
-      folder: folderName.trim(),
+      folder: finalFolder,
+      caption: "",
     };
 
     setSavedMoments((current) => [...current, saved]);
-
-    setHistory((current) => [
-      ...current,
-      {
-        type: "keep",
-        index: currentIndex,
-        saved,
-      },
-    ]);
-
     setPendingMoment(null);
     setCurrentIndex((current) => current + 1);
-    setNote("");
-    setFolderName("");
-    setShowFolderInput(false);
-    setTreasured(false);
-  }
-
-  function deletePendingMoment() {
-    if (!pendingMoment) return;
-
-    setHistory((current) => [
-      ...current,
-      {
-        type: "delete",
-        index: currentIndex,
-        photo: pendingMoment,
-      },
-    ]);
-
-    setPendingMoment(null);
-    setCurrentIndex((current) => current + 1);
-    setNote("");
-    setFolderName("");
-    setShowFolderInput(false);
-    setTreasured(false);
-  }
-
-  function undoLastAction() {
-    const lastAction = history[history.length - 1];
-    if (!lastAction) return;
-
-    setHistory((current) => current.slice(0, -1));
-    setPendingMoment(null);
-    setNote("");
-    setFolderName("");
-    setShowFolderInput(false);
-    setTreasured(false);
-
-    if (lastAction.type === "keep") {
-      setSavedMoments((current) =>
-        current.filter((moment) => moment.id !== lastAction.saved.id)
-      );
-      setCurrentIndex(lastAction.index);
-      return;
-    }
-
-    if (lastAction.type === "trash") {
-      setPhotos((current) => {
-        const restored = [...current];
-        restored.splice(lastAction.index, 0, lastAction.photo);
-        return restored;
-      });
-
-      setPreviewPhotos((current) => {
-        const restored = [...current];
-        restored.splice(lastAction.index, 0, lastAction.photo);
-        return restored;
-      });
-
-      setCurrentIndex(lastAction.index);
-      return;
-    }
-
-    setCurrentIndex(lastAction.index);
+    setFriendName("");
+    setNewFriendName("");
+    setShareWithFriend(true);
   }
 
   function handlePointerDown(event) {
@@ -366,142 +408,158 @@ function App() {
     setStartX(null);
   }
 
-  function createWeeklyRecap() {
-    setLoading(true);
-    setFadeOut(false);
-    setFlashIndex(0);
+  function deletePendingMoment() {
+    setPendingMoment(null);
+    setCurrentIndex((current) => current + 1);
+    setFriendName("");
+    setNewFriendName("");
+    setShareWithFriend(true);
+    setFolderName("");
+    setNewFolderName("");
+    setTreasured(false);
   }
 
-  function nextRecap() {
-    if (recapMoments.length === 0) return;
-    setRecapIndex((current) => (current + 1) % recapMoments.length);
-  }
+  function removeCurrentPhoto() {
+    if (!currentPhoto) return;
 
-  function prevRecap() {
-    if (recapMoments.length === 0) return;
-    setRecapIndex((current) =>
-      current === 0 ? recapMoments.length - 1 : current - 1
+    setPhotos((current) =>
+      current.filter((photo) => photo.id !== currentPhoto.id)
     );
   }
 
-  function nextTreasure() {
-    if (treasuredMoments.length === 0) return;
-    setRecapIndex((current) => (current + 1) % treasuredMoments.length);
+  function openMemory(moment) {
+    setOpenMoment(moment);
+    setCaptionDraft(moment.caption || "");
   }
 
-  function prevTreasure() {
-    if (treasuredMoments.length === 0) return;
-    setRecapIndex((current) =>
-      current === 0 ? treasuredMoments.length - 1 : current - 1
+  function saveCaption() {
+    if (!openMoment) return;
+
+    setSavedMoments((current) =>
+      current.map((moment) =>
+        moment.id === openMoment.id
+          ? { ...moment, caption: captionDraft.trim() }
+          : moment
+      )
+    );
+
+    setOpenMoment((current) =>
+      current ? { ...current, caption: captionDraft.trim() } : current
     );
   }
 
-  function nextArchive() {
-    if (archiveMoments.length === 0) return;
-    setArchiveIndex((current) => (current + 1) % archiveMoments.length);
+  function addManualFriend() {
+    setInviteOpen(true);
+    setInviteFriendName("");
   }
 
-  function prevArchive() {
-    if (archiveMoments.length === 0) return;
-    setArchiveIndex((current) =>
-      current === 0 ? archiveMoments.length - 1 : current - 1
+  function createInviteFriend() {
+    const cleanName = inviteFriendName.trim();
+    if (!cleanName) return;
+
+    setManualFriends((current) =>
+      current.includes(cleanName) ? current : [...current, cleanName]
     );
+
+    setSelectedFriend(cleanName);
+    setFriendNameDraft(cleanName);
+    setEditingFriendName(false);
+    setPeopleTab("with");
+    setInviteOpen(false);
+    setInviteFriendName("");
   }
 
-  function selectDay(day) {
-    setSelectedDay(day);
-    setArchiveIndex(0);
+  function copyInviteLink() {
+    const link = "https://notice.app/invite/f8th";
+    navigator.clipboard?.writeText(link);
   }
 
-  function formatDate(isoDate) {
-    return new Date(isoDate).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-  }
-
-  if (loading) {
-    const flashSource =
-      todayMoments.length > 0
-        ? todayMoments
-        : previewPhotos.length > 0
-          ? previewPhotos
-          : [];
-
-    const activeFlash =
-      flashSource.length > 0
-        ? flashSource[flashIndex % flashSource.length]
-        : null;
-
-    const previousFlash =
-      flashSource.length > 0
-        ? flashSource[
-        (flashIndex - 1 + flashSource.length) % flashSource.length
-        ]
-        : null;
-
-    return (
-      <main className="min-h-screen bg-black flex justify-center">
-        <style>
-          {`
-            @keyframes memoryFadeIn {
-              0% { opacity: 0; transform: scale(1.04); }
-              100% { opacity: 1; transform: scale(1); }
-            }
-          `}
-        </style>
-
-        <section
-          className={`w-full max-w-[430px] h-screen relative overflow-hidden transition-opacity duration-700 ${fadeOut ? "opacity-0" : "opacity-100"
-            }`}
-        >
-          {previousFlash && (
-            <img
-              src={previousFlash.image}
-              alt="Previous flashback"
-              className="absolute inset-0 w-full h-full object-cover opacity-100"
-            />
-          )}
-
-          {activeFlash && (
-            <img
-              key={activeFlash.id}
-              src={activeFlash.image}
-              alt="Flashback"
-              className="absolute inset-0 w-full h-full object-cover"
-              style={{ animation: "memoryFadeIn 900ms ease-in-out forwards" }}
-            />
-          )}
-
-          <div className="absolute inset-0 bg-black/30 backdrop-blur-[1px]" />
-
-          <div className="absolute bottom-8 left-5 right-5 text-white">
-            <p className="text-[10px] uppercase tracking-[0.25em] text-white/65">
-              flashback
-            </p>
-            <h1 className="text-xl font-medium mt-1">
-              Building your weekly recap.
-            </h1>
-          </div>
-        </section>
-      </main>
+  function messageInvite() {
+    const text = encodeURIComponent(
+      "Add me on Notice so we can share memories together: https://notice.app/invite/f8th"
     );
+    window.location.href = `sms:?&body=${text}`;
+  }
+
+  function renameSelectedFriend() {
+    const cleanName = friendNameDraft.trim();
+    if (!selectedFriend || !cleanName) return;
+
+    setSavedMoments((current) =>
+      current.map((moment) =>
+        moment.friend === selectedFriend
+          ? { ...moment, friend: cleanName }
+          : moment
+      )
+    );
+
+    setSelectedFriend(cleanName);
+    setFriendNameDraft(cleanName);
+    setEditingFriendName(false);
+  }
+
+  function getDayCount(day) {
+    return savedMoments.filter((moment) => {
+      const date = new Date(moment.createdAt);
+      return (
+        date.getDate() === day &&
+        date.getMonth() === calendarMonth.getMonth() &&
+        date.getFullYear() === calendarMonth.getFullYear()
+      );
+    }).length;
+  }
+
+  function getDayClass(day) {
+    const count = getDayCount(day);
+    const now = new Date();
+
+    const isCurrentMonth =
+      calendarMonth.getMonth() === now.getMonth() &&
+      calendarMonth.getFullYear() === now.getFullYear();
+
+    const isToday = isCurrentMonth && day === today;
+
+    if (selectedDay === day && isToday) {
+      return "bg-[#E5E7EB] text-[#5E6E82] border border-[#C9D1DA]";
+    }
+
+    if (selectedDay === day) {
+      return "bg-[#8FAED0] text-white border border-[#8FAED0]";
+    }
+
+    if (isToday) {
+      return "bg-[#ECEFF2] text-[#5E6E82] border border-[#D6DCE3]";
+    }
+
+    if (count === 0) {
+      return "bg-transparent text-[#8B97A4] border border-transparent";
+    }
+
+    if (count <= 2) {
+      return "bg-[#EEF5FB] text-[#5E6E82] border border-[#D9E4EE]";
+    }
+
+    if (count <= 5) {
+      return "bg-[#D7E6F4] text-[#5E6E82] border border-[#BFD4E8]";
+    }
+
+    return "bg-[#8FAED0] text-white border border-[#8FAED0]";
   }
 
   return (
-    <main className="min-h-screen bg-[#eef2f6] text-[#1c1c1e] flex justify-center">
-      <section className="w-full max-w-[430px] h-screen bg-[#f8f8f8] shadow-2xl flex flex-col relative overflow-hidden">
+    <main className="app-shell min-h-screen bg-[#FFFDF9] text-[#364252] flex justify-center">
+      <section className="w-full max-w-[430px] h-screen bg-[#FFFDF9] shadow-[0_12px_32px_rgba(143,174,208,0.18)] flex flex-col relative overflow-hidden border-[3px] border-[#8FAED0]">
         <header className="px-4 pt-4 pb-1 flex items-center justify-between shrink-0">
           <div>
-            <p className="font-serif text-2xl tracking-tight text-stone-700">
+            <p className="font-serif text-2xl tracking-tight text-[#5E6E82]">
               notice
             </p>
-            <p className="text-[10px] text-stone-400">
-              photos into memories
+                        <p className="text-[10px] text-[#A5AFB8]">
+              {savedMoments.length} memories / {savedMoments.filter((moment) => moment.friend).length} with friends
             </p>
           </div>
 
-          <button className="w-8 h-8 rounded-full bg-white shadow-sm grid place-items-center">
+          <button className="w-8 h-8 rounded-full bg-[#EEF3F8] shadow-sm grid place-items-center text-[#5E6E82]">
             <Bell size={14} />
           </button>
         </header>
@@ -510,334 +568,38 @@ function App() {
           {page === "review" && (
             <div className="h-full flex flex-col gap-2">
               {!currentPhoto && !pendingMoment && !finishedReview && (
-                <>
-                  <div className="rounded-2xl bg-white/70 border border-stone-100 px-3 py-2 shadow-sm shrink-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-medium text-stone-600">
-                          Tonight’s Notice
-                        </p>
-                        <p className="text-[10px] text-stone-400">
-                          review what’s worth keeping
-                        </p>
-                      </div>
-
-                      <button
-                        onClick={undoLastAction}
-                        disabled={history.length === 0}
-                        className="w-8 h-8 rounded-full bg-stone-100 grid place-items-center disabled:opacity-30"
-                      >
-                        <RotateCcw size={14} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex-1 rounded-[1.7rem] overflow-hidden relative border border-stone-100 shadow-sm bg-stone-200">
-                    {homePreviewImage ? (
-                      <>
-                        <img
-                          src={homePreviewImage}
-                          alt="Today preview"
-                          className="absolute inset-0 w-full h-full object-cover scale-105"
-                        />
-                        <div className="absolute inset-0 bg-white/30 backdrop-blur-md" />
-                      </>
-                    ) : (
-                      <div className="absolute inset-0 bg-gradient-to-br from-stone-200 to-stone-300" />
-                    )}
-
-                    <div className="absolute inset-0 p-4 flex flex-col justify-between">
-                      <div>
-                        <p className="text-[10px] uppercase tracking-[0.22em] text-stone-500">
-                          today
-                        </p>
-                        <h1 className="text-xl font-medium mt-1 text-stone-800 max-w-[260px]">
-                          {dailyRecapMade
-                            ? "Your week is taking shape."
-                            : "Look back quietly."}
-                        </h1>
-                        <p className="text-xs text-stone-500 mt-1 max-w-[230px]">
-                          {dailyRecapMade
-                            ? "add more photos or watch recap"
-                            : "keep what matters, skip the rest"}
-                        </p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="block rounded-2xl bg-white/75 backdrop-blur px-3 py-3 cursor-pointer shadow-sm">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-full bg-[#1c1c1e] text-white grid place-items-center">
-                              <ImagePlus size={15} />
-                            </div>
-                            <div>
-                              <p className="font-medium text-xs text-stone-800">
-                                Review today’s photos
-                              </p>
-                              <p className="text-[10px] text-stone-400">
-                                sorted by photo date
-                              </p>
-                            </div>
-                          </div>
-
-                          <input
-                            type="file"
-                            accept="image/*"
-                            multiple
-                            onChange={handlePhotoReview}
-                            className="hidden"
-                          />
-                        </label>
-
-                        {savedMoments.length > 0 && (
-                          <button
-                            onClick={() => {
-                              setRecapMode("weekly");
-                              setRecapView("video");
-                              setRecapIndex(0);
-                              setPage("recap");
-                            }}
-                            className="w-full rounded-2xl bg-white/55 backdrop-blur px-3 py-3 text-left shadow-sm"
-                          >
-                            <p className="font-medium text-xs text-stone-800">
-                              Watch weekly recap
-                            </p>
-                            <p className="text-[10px] text-stone-400">
-                              one photo per second
-                            </p>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {currentPhoto && !pendingMoment && (
-                <>
-                  <div className="rounded-2xl bg-white/70 border border-stone-100 px-3 py-2 shadow-sm shrink-0">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-xs font-medium text-stone-600">
-                          Review
-                        </p>
-                        <p className="text-[10px] text-stone-400">
-                          left skip · right keep
-                        </p>
-                      </div>
-
-                      <button
-                        onClick={undoLastAction}
-                        disabled={history.length === 0}
-                        className="w-8 h-8 rounded-full bg-stone-100 grid place-items-center disabled:opacity-30"
-                      >
-                        <RotateCcw size={14} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="text-[10px] text-stone-400 px-1 shrink-0 flex justify-between">
-                    <span>
-                      {currentIndex + 1}/{photos.length}
-                    </span>
-                    <span>{formatDate(currentPhoto.createdAt)}</span>
-                  </div>
-
-                  <div
-                    onPointerDown={handlePointerDown}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
-                    onPointerCancel={handlePointerUp}
-                    className="relative flex-1 min-h-0 touch-none"
-                  >
-                    <div
-                      className="absolute inset-0 rounded-[1.8rem] overflow-hidden bg-white border border-stone-100 shadow-lg transition-transform"
-                      style={{
-                        transform: `translateX(${dragX}px) rotate(${dragX / 18
-                          }deg)`,
-                      }}
-                    >
-                      <img
-                        src={currentPhoto.image}
-                        alt="Review photo"
-                        className="w-full h-full object-cover"
-                        draggable="false"
-                      />
-
-                      <button
-                        onClick={removeCurrentPhotoFromReview}
-                        className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white/75 backdrop-blur grid place-items-center text-stone-700"
-                        title="Remove from review"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-
-                      {dragX > 40 && (
-                        <div className="absolute top-12 left-5 rounded-2xl border-2 border-green-500 bg-white/80 px-3 py-1.5 text-green-600 text-sm font-bold rotate-[-10deg]">
-                          KEEP
-                        </div>
-                      )}
-
-                      {dragX < -40 && (
-                        <div className="absolute top-12 right-5 rounded-2xl border-2 border-red-500 bg-white/80 px-3 py-1.5 text-red-600 text-sm font-bold rotate-[10deg]">
-                          SKIP
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 shrink-0">
-                    <button
-                      onClick={skipPhoto}
-                      className="rounded-2xl bg-white border border-stone-200 py-2.5 flex items-center justify-center gap-1.5 text-sm font-medium text-stone-600"
-                    >
-                      <X size={16} />
-                      Skip
-                    </button>
-
-                    <button
-                      onClick={keepPhoto}
-                      className="rounded-2xl bg-[#1c1c1e] text-white py-2.5 flex items-center justify-center gap-1.5 text-sm font-medium"
-                    >
-                      <Sparkles size={16} />
-                      Keep
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {pendingMoment && (
-                <div className="flex-1 min-h-0 rounded-[1.8rem] bg-white shadow-lg border border-stone-100 overflow-hidden flex flex-col">
-                  <img
-                    src={pendingMoment.image}
-                    alt="Chosen memory"
-                    className="w-full h-[62%] object-cover shrink-0"
-                  />
-
-                  <div className="p-3 flex flex-col gap-2 flex-1">
-                    <div>
-                      <p className="text-xs font-medium text-stone-600">
-                        Quick note
-                      </p>
-                      <p className="text-[10px] text-stone-400">
-                        {formatDate(pendingMoment.createdAt)}
-                      </p>
-                    </div>
-
-                    <input
-                      value={note}
-                      onChange={(event) => setNote(event.target.value)}
-                      placeholder="type a sentence..."
-                      className="w-full rounded-2xl bg-stone-100 px-3 py-2.5 text-xs outline-none"
-                    />
-
-                    {showFolderInput && (
-                      <input
-                        value={folderName}
-                        onChange={(event) => setFolderName(event.target.value)}
-                        placeholder="friends, food, school..."
-                        className="w-full rounded-2xl bg-stone-100 px-3 py-2.5 text-xs outline-none"
-                      />
-                    )}
-
-                    <div className="flex justify-center gap-3">
-                      <button
-                        onClick={() => setTreasured((current) => !current)}
-                        className={`w-11 h-11 rounded-full grid place-items-center ${treasured
-                          ? "bg-[#1c1c1e] text-white"
-                          : "bg-stone-100 text-stone-700"
-                          }`}
-                        title="Heart"
-                      >
-                        <Heart size={17} />
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          setShowFolderInput((current) => !current)
-                        }
-                        className={`w-11 h-11 rounded-full grid place-items-center ${showFolderInput
-                          ? "bg-[#1c1c1e] text-white"
-                          : "bg-stone-100 text-stone-700"
-                          }`}
-                        title="Folder"
-                      >
-                        <Folder size={17} />
-                      </button>
-
-                      <button
-                        onClick={deletePendingMoment}
-                        className="w-11 h-11 rounded-full grid place-items-center bg-stone-100 text-stone-700"
-                        title="Delete"
-                      >
-                        <Trash2 size={17} />
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 mt-auto">
-                      <button
-                        onClick={() => setPendingMoment(null)}
-                        className="rounded-2xl bg-stone-100 py-2.5 text-xs font-medium"
-                      >
-                        Back
-                      </button>
-
-                      <button
-                        onClick={savePendingMoment}
-                        className="rounded-2xl bg-[#1c1c1e] text-white py-2.5 text-xs font-medium"
-                      >
-                        Save
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {finishedReview && (
-                <div className="flex-1 rounded-[1.8rem] overflow-hidden relative border border-stone-100 shadow-sm bg-stone-200">
-                  {homePreviewImage ? (
-                    <>
-                      <img
-                        src={homePreviewImage}
-                        alt="Finished review"
-                        className="absolute inset-0 w-full h-full object-cover scale-105"
-                      />
-                      <div className="absolute inset-0 bg-white/30 backdrop-blur-md" />
-                    </>
-                  ) : (
-                    <div className="absolute inset-0 bg-gradient-to-br from-stone-200 to-stone-300" />
-                  )}
-
+                <div className="flex-1 rounded-[1.8rem] overflow-hidden relative border border-[#D9E4EE] bg-[#F6F1E8]">
                   <div className="absolute inset-0 p-4 flex flex-col justify-between">
                     <div>
-                      <p className="text-[10px] uppercase tracking-[0.22em] text-stone-500">
-                        week
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-[#8B97A4]">
+                        today
                       </p>
-                      <p className="text-xs text-stone-500 mt-1">
-                        {savedMoments.length} memories saved
+                      <h1 className="text-xl font-medium mt-1 text-[#364252]">
+                        Look back quietly.
+                      </h1>
+                      <p className="text-xs text-[#8B97A4] mt-1 max-w-[230px]">
+                        save photos, live photos, and videos
                       </p>
                     </div>
 
-                    <div className="flex flex-col items-center justify-center flex-1 text-center">
-                      <button
-                        onClick={createWeeklyRecap}
-                        className="rounded-[1.7rem] bg-white/80 backdrop-blur px-8 py-6 shadow-sm active:scale-[0.98] transition"
-                      >
-                        <p className="text-xl font-medium text-stone-800">
-                          Watch weekly recap
-                        </p>
-                        <p className="text-[11px] text-stone-400 mt-1">
-                          one photo per second
-                        </p>
-                      </button>
-                    </div>
+                    <label className="block rounded-2xl bg-[#FFFCF7] px-3 py-3 cursor-pointer shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-[#8FAED0] text-white grid place-items-center">
+                          <ImagePlus size={15} />
+                        </div>
+                        <div>
+                          <p className="font-medium text-xs text-[#364252]">
+                            Review past memories
+                          </p>
+                          <p className="text-[10px] text-[#A5AFB8]">
+                            swipe right to save / left to skip
+                          </p>
+                        </div>
+                      </div>
 
-                    <label className="block rounded-2xl bg-white/55 backdrop-blur px-3 py-3 text-center shadow-sm cursor-pointer">
-                      <p className="font-medium text-xs text-stone-700">
-                        Add more photos
-                      </p>
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/*,video/*,.mov,.mp4"
                         multiple
                         onChange={handlePhotoReview}
                         className="hidden"
@@ -846,309 +608,780 @@ function App() {
                   </div>
                 </div>
               )}
+
+              {currentPhoto && !pendingMoment && (
+                <>
+                  <div className="rounded-2xl bg-[#FFFCF7] border border-[#D9E4EE] px-3 py-2 shadow-sm shrink-0">
+                    <p className="text-xs font-medium text-[#708090]">
+                      Review
+                    </p>
+                    <p className="text-[10px] text-[#A5AFB8]">
+                      {currentIndex + 1}/{photos.length}
+                    </p>
+                  </div>
+
+                  <div
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerCancel={handlePointerUp}
+                    className="relative flex-1 min-h-0 rounded-[1.8rem] overflow-hidden bg-[#EEF3F8] border border-[#D9E4EE] touch-none transition-transform"
+                    style={{
+                      transform: `translateX(${dragX}px) rotate(${dragX / 18}deg)`,
+                    }}
+                  >
+                    <Media
+                      moment={currentPhoto}
+                      className="w-full h-full object-contain"
+                      mode="cover"
+                    />
+
+                    <button
+                      onClick={removeCurrentPhoto}
+                      className="absolute top-3 left-3 w-9 h-9 rounded-full bg-[#FFFCF7]/80 backdrop-blur grid place-items-center text-[#5E6E82]"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+
+                    {dragX > 40 && (
+                      <div className="absolute top-12 left-5 rounded-2xl border-2 border-[#8FAED0] bg-[#FFFCF7]/85 px-3 py-1.5 text-[#5E6E82] text-sm font-bold rotate-[-10deg]">
+                        SAVE
+                      </div>
+                    )}
+
+                    {dragX < -40 && (
+                      <div className="absolute top-12 right-5 rounded-2xl border-2 border-red-400 bg-[#FFFCF7]/85 px-3 py-1.5 text-red-500 text-sm font-bold rotate-[10deg]">
+                        SKIP
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 shrink-0">
+                    <button
+                      onClick={skipPhoto}
+                      className="rounded-2xl bg-[#FFFCF7] border border-[#D9E4EE] py-2.5 flex items-center justify-center gap-1.5 text-sm font-medium text-[#5E6E82]"
+                    >
+                      <X size={16} />
+                      Skip
+                    </button>
+
+                    <button
+                      onClick={keepPhoto}
+                      className="rounded-2xl bg-[#8FAED0] text-white py-2.5 flex items-center justify-center gap-1.5 text-sm font-medium"
+                    >
+                      <Sparkles size={16} />
+                      Keep
+                    </button>
+                  </div>
+                </>
+              )}
+              {pendingMoment && (
+                <div className="flex-1 min-h-0 rounded-[1.8rem] bg-black shadow-lg border border-[#D9E4EE] overflow-hidden relative">
+                  <Media
+                    moment={pendingMoment}
+                    className="absolute inset-0 w-full h-full object-contain"
+                    mode="contain"
+                  />
+
+                  <button
+                    onClick={deletePendingMoment}
+                    className="absolute top-3 left-3 w-9 h-9 rounded-full bg-[#FFFDF9]/85 backdrop-blur grid place-items-center text-[#5E6E82] border border-white/40"
+                    title="Remove from review"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent p-3">
+                    <div className="rounded-[1.35rem] bg-[#FFFDF9]/90 backdrop-blur px-3 py-2.5 border border-white/40 shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={friendName}
+                          onChange={(event) => setFriendName(event.target.value)}
+                          className="flex-1 min-w-0 h-9 rounded-full bg-[#EEF3F8] px-3 text-[10px] outline-none text-[#364252] border border-[#D9E4EE]"
+                        >
+                          <option value="">Tag friend</option>
+                          {existingFriends.map((friend) => (
+                            <option key={friend} value={friend}>
+                              {friend}
+                            </option>
+                          ))}
+                          <option value="__new__">+ New friend</option>
+                        </select>
+
+                        <div className={`relative w-9 h-9 rounded-full grid place-items-center border ${
+                          folderName
+                            ? "bg-[#8FAED0] border-[#8FAED0] text-white"
+                            : "bg-[#EEF3F8] border-[#D9E4EE] text-[#5E6E82]"
+                        }`}>
+                          <Folder size={14} />
+                          <select
+                            value={folderName}
+                            onChange={(event) => setFolderName(event.target.value)}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                            aria-label="Choose folder"
+                          >
+                            <option value="">No folder</option>
+                            {existingFolders.map((folder) => (
+                              <option key={folder} value={folder}>
+                                {folder}
+                              </option>
+                            ))}
+                            <option value="__new__">+ New folder</option>
+                          </select>
+                        </div>
+
+                        <button
+                          onClick={() => setTreasured((current) => !current)}
+                          className={`w-9 h-9 rounded-full grid place-items-center border ${
+                            treasured
+                              ? "bg-[#8FAED0] border-[#8FAED0] text-white"
+                              : "bg-[#EEF3F8] border-[#D9E4EE] text-[#5E6E82]"
+                          }`}
+                          aria-label="Toggle treasured memory"
+                        >
+                          <Heart size={14} fill={treasured ? "currentColor" : "none"} />
+                        </button>
+                      </div>
+
+                      {(friendName === "__new__" || folderName === "__new__") && (
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          {friendName === "__new__" && (
+                            <input
+                              value={newFriendName}
+                              onChange={(event) => setNewFriendName(event.target.value)}
+                              placeholder="friend name"
+                              className="col-span-2 w-full rounded-full bg-[#EEF3F8] px-3 py-2 text-[11px] outline-none border border-[#D9E4EE]"
+                            />
+                          )}
+
+                          {folderName === "__new__" && (
+                            <input
+                              value={newFolderName}
+                              onChange={(event) => setNewFolderName(event.target.value)}
+                              placeholder="folder name"
+                              className="w-full rounded-full bg-[#EEF3F8] px-3 py-2 text-[11px] outline-none border border-[#D9E4EE]"
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-[38px_1fr_96px] gap-2 mt-2">
+                        <button
+                          onClick={skipPhoto}
+                          className="w-9 h-9 rounded-full bg-[#EEF3F8] border border-[#D9E4EE] grid place-items-center text-[#5E6E82]"
+                          title="Do not save to memories"
+                        >
+                          <X size={15} />
+                        </button>
+
+                        <button
+                          onClick={savePendingMoment}
+                          className="h-9 rounded-full bg-[#8FAED0] text-white text-[11px] font-medium"
+                        >
+                          Save memory
+                        </button>
+
+                        <button
+                          onClick={() => setShareWithFriend((current) => !current)}
+                          className={`h-9 rounded-full px-2 text-[10px] border ${
+                            shareWithFriend
+                              ? "bg-[#8FAED0] border-[#8FAED0] text-white"
+                              : "bg-[#EEF3F8] border-[#D9E4EE] text-[#5E6E82]"
+                          }`}
+                        >
+                          {shareWithFriend ? "Shared on" : "Shared off"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {finishedReview && (
+                <div className="flex-1 rounded-[1.8rem] bg-[#F6F1E8] border border-[#D9E4EE] overflow-hidden relative">
+                  {reviewRecapPlaying && savedMoments.length > 0 ? (
+                    <>
+                      <Media
+                        moment={savedMoments[reviewRecapIndex % savedMoments.length]}
+                        className="absolute inset-0 w-full h-full object-contain"
+                        mode="cover"
+                      />
+                      <div className="absolute inset-0 bg-black/10" />
+                      <p className="absolute left-4 bottom-4 text-[10px] text-white/90">
+                        quick weekly recap
+                      </p>
+                    </>
+                  ) : (
+                    <div className="absolute inset-0 grid place-items-center p-4 text-center">
+                      <div>
+                        <p className="text-xl font-medium text-[#364252]">
+                          Review complete.
+                        </p>
+                        <p className="text-xs text-[#8B97A4] mt-1">
+                          {savedMoments.length} memories saved
+                        </p>
+
+                        {!reviewRecapDone ? (
+                          <button
+                            onClick={() => {
+                              setReviewRecapPlaying(true);
+                              setReviewRecapDone(false);
+                              setReviewRecapIndex(0);
+                            }}
+                            className="mt-4 rounded-2xl bg-[#8FAED0] text-white px-5 py-3 text-xs font-medium"
+                          >
+                            Make weekly recap
+                          </button>
+                        ) : (
+                          <div className="mt-4 flex flex-col gap-2">
+                            <button
+                              onClick={() => {
+                                setRecapMode("weekly");
+                                setRecapIndex(0);
+                                setPage("recap");
+                              }}
+                              className="rounded-2xl bg-[#8FAED0] text-white px-5 py-3 text-xs font-medium"
+                            >
+                              Watch weekly recap
+                            </button>
+
+                            <label className="rounded-2xl bg-[#FFFCF7] border border-[#D9E4EE] text-[#5E6E82] px-5 py-3 text-xs font-medium cursor-pointer">
+                              Add more photos
+                              <input
+                                type="file"
+                                accept="image/*,video/*,.mov,.mp4"
+                                multiple
+                                onChange={handlePhotoReview}
+                                className="hidden"
+                              />
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {page === "people" && (
+            <div className="h-full flex flex-col gap-2 relative">
+              {!selectedFriend ? (
+                <>
+                  <div className="rounded-2xl bg-[#FFFCF7] border border-[#D9E4EE] px-3 py-2 shadow-sm shrink-0">
+                    <p className="text-xs font-medium text-[#708090]">
+                      People
+                    </p>
+                    <p className="text-[10px] text-[#A5AFB8]">
+                      private memory spaces by person
+                    </p>
+                  </div>
+
+                  <div className="flex-1 min-h-0 rounded-[1.8rem] bg-[#FFFCF7] border border-[#D9E4EE] shadow-sm p-3 overflow-y-auto">
+                    {Object.keys(people).length === 0 ? (
+                      <button
+  onClick={addManualFriend}
+  className="col-span-2 w-full rounded-2xl bg-[#EEF3F8] border border-dashed border-[#BFD4E8] px-4 py-4 text-center text-sm font-medium text-[#5E6E82]"
+>
+  + Add friends
+</button>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        {Object.entries(people).map(([friend, items]) => (
+                          <button
+                            key={friend}
+                            onClick={() => {
+                              setSelectedFriend(friend);
+                              setFriendNameDraft(friend);
+                              setEditingFriendName(false);
+                              setPeopleTab("with");
+                            }}
+                            className="rounded-2xl bg-[#EEF3F8] border border-[#D9E4EE] p-2 text-left h-32 relative overflow-hidden"
+                          >
+                            {items[0] && (
+                              <Media
+                                moment={items[0]}
+                                className="absolute inset-0 w-full h-full object-cover opacity-40"
+                                mode="cover"
+                              />
+                            )}
+
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-black/5 to-transparent" />
+
+                            <div className="absolute left-2 bottom-2 right-2 z-10">
+                              <p className="font-medium text-xs text-white capitalize leading-tight">
+                                {friend}
+                              </p>
+                              <p className="text-[9px] text-white/75">
+                                {items.length} memories
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+
+                        <button
+  onClick={addManualFriend}
+  className="col-span-2 w-full rounded-2xl bg-[#EEF3F8] border border-dashed border-[#BFD4E8] px-4 py-4 text-center text-sm font-medium text-[#5E6E82]"
+>
+  + Add friends
+</button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setSelectedFriend("")}
+                    className="rounded-2xl bg-[#EEF3F8] px-3 py-2 text-left text-xs text-[#5E6E82] shrink-0"
+                  >
+                    ? Back
+                  </button>
+
+                  <div className="rounded-2xl bg-[#8FAED0] text-white px-3 py-3 shadow-sm shrink-0">
+                    <p className="text-[10px] text-white/70">memory space</p>
+                    <h1 className="text-lg font-medium mt-0.5">
+                      {selectedFriend}
+                    </h1>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 shrink-0">
+                    <TabButton
+                      label="With them"
+                      active={peopleTab === "with"}
+                      onClick={() => setPeopleTab("with")}
+                    />
+                    <TabButton
+                      label="Shared"
+                      active={peopleTab === "shared"}
+                      onClick={() => setPeopleTab("shared")}
+                    />
+                    <TabButton
+                      label="Montage"
+                      active={peopleTab === "montage"}
+                      onClick={() => setPeopleTab("montage")}
+                    />
+                  </div>
+
+                  {peopleTab === "montage" ? (
+                    <div className="flex-1 min-h-0 rounded-[1.8rem] overflow-hidden bg-black shadow-lg relative">
+                      {montageMoments.length === 0 ? (
+                        <EmptyState text="No montage memories yet." />
+                      ) : (
+                        <>
+                          <Media
+                            moment={montageMoments[peopleMontageIndex % montageMoments.length]}
+                            className="absolute inset-0 w-full h-full object-contain"
+                            mode="cover"
+                          />
+
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/65 to-transparent p-4 text-white">
+                            <p className="text-[10px] text-white/75">
+                              montage ï¿½ {selectedFriend}
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex-1 min-h-0 rounded-[1.8rem] bg-[#FFFCF7] border border-[#D9E4EE] shadow-sm p-2 overflow-y-auto">
+                      {visiblePeopleMoments.length === 0 ? (
+                        <EmptyState text="Nothing here yet." />
+                      ) : (
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {visiblePeopleMoments.map((moment) => (
+                            <button
+                              key={moment.id}
+                              onClick={() => openMemory(moment)}
+                              className="relative aspect-square rounded-2xl overflow-hidden bg-[#EEF3F8] border border-[#D9E4EE]"
+                            >
+                              <Media
+                                moment={moment}
+                                className="absolute inset-0 w-full h-full object-contain"
+                                mode="cover"
+                              />
+
+                              <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" />
+
+                              <p className="absolute left-2 bottom-1.5 text-[9px] text-white/90">
+                                {formatDate(moment.createdAt)}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
           {page === "recap" && (
             <div className="h-full flex flex-col gap-2">
-              <div className="rounded-2xl bg-[#1c1c1e] text-white px-3 py-2.5 shadow-sm shrink-0">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-[10px] text-white/45">recap video</p>
-                    <h1 className="text-sm font-medium mt-0.5">
-                      {recapMode} memories
-                    </h1>
+              <div className="rounded-2xl bg-[#8FAED0] text-white px-3 py-2.5 shadow-sm shrink-0">
+
+                <div className="flex items-center gap-1.5">
+                  <div className="grid grid-cols-3 gap-1.5 flex-1">
+                    {["weekly", "monthly", "yearly"].map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => {
+                          setRecapMode(mode);
+                          setRecapIndex(0);
+                        }}
+                        className={`rounded-full py-1 text-[10px] ${recapMode === mode
+                            ? "bg-white text-[#364252]"
+                            : "bg-white/15 text-white/75"
+                          }`}
+                      >
+                        {mode}
+                      </button>
+                    ))}
                   </div>
 
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={() => {
-                        setRecapView("treasures");
-                        setRecapIndex(0);
-                      }}
-                      className={`w-8 h-8 rounded-full grid place-items-center ${recapView === "treasures"
-                        ? "bg-white text-black"
-                        : "bg-white/10 text-white/65"
-                        }`}
-                      title="Hearted"
-                    >
-                      <Heart size={14} />
-                    </button>
+                  <button
+                    onClick={() => setRecapFolderOnly((current) => !current)}
+                    className={`w-8 h-8 rounded-full grid place-items-center border ${recapFolderOnly
+                        ? "bg-white text-[#364252] border-white"
+                        : "bg-[#EAF2FB] text-[#5E748F] border-[#D5E3F2]"
+                      }`}
+                    title="Folder memories"
+                  >
+                    <Folder size={14} />
+                  </button>
 
-                    <button
-                      onClick={() => setRecapView("folders")}
-                      className={`w-8 h-8 rounded-full grid place-items-center ${recapView === "folders"
-                        ? "bg-white text-black"
-                        : "bg-white/10 text-white/65"
-                        }`}
-                      title="Folders"
-                    >
-                      <Folder size={14} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-1.5 mt-2">
-                  {["weekly", "monthly"].map((mode) => (
-                    <button
-                      key={mode}
-                      onClick={() => {
-                        setRecapMode(mode);
-                        setRecapView("video");
-                        setRecapIndex(0);
-                      }}
-                      className={`rounded-full py-1 text-[10px] ${recapMode === mode && recapView === "video"
-                        ? "bg-white text-black"
-                        : "bg-white/10 text-white/60"
-                        }`}
-                    >
-                      {mode}
-                    </button>
-                  ))}
+                  <button
+                    onClick={() => setRecapHeartOnly((current) => !current)}
+                    className={`w-8 h-8 rounded-full grid place-items-center border ${recapHeartOnly
+                        ? "bg-white text-[#364252] border-white"
+                        : "bg-[#EAF2FB] text-[#5E748F] border-[#D5E3F2]"
+                      }`}
+                    title="Treasured memories"
+                  >
+                    <Heart size={14} fill={recapHeartOnly ? "currentColor" : "none"} />
+                  </button>
                 </div>
               </div>
 
-              {recapView === "video" && (
-                <>
-                  {recapMoments.length === 0 ? (
-                    <EmptyState text="No memories yet." />
-                  ) : (
-                    <div className="flex-1 min-h-0 rounded-[1.8rem] overflow-hidden bg-black shadow-lg relative">
-                      <style>
-                        {`
-                          @keyframes recapPhotoFade {
-                            0% { opacity: 0; transform: scale(1.03); }
-                            18% { opacity: 1; transform: scale(1); }
-                            82% { opacity: 1; transform: scale(1); }
-                            100% { opacity: 0; transform: scale(1.02); }
-                          }
-                        `}
-                      </style>
+              {recapMoments.length === 0 ? (
+                <EmptyState text="No memories yet." />
+              ) : (
+                <button
+                  onClick={() =>
+                    openMemory(recapMoments[recapIndex % recapMoments.length])
+                  }
+                  className="flex-1 min-h-0 rounded-[1.8rem] overflow-hidden bg-black shadow-lg relative text-left"
+                >
+                  <Media
+                    moment={recapMoments[recapIndex % recapMoments.length]}
+                    className="absolute inset-0 w-full h-full object-contain"
+                    mode="cover"
+                  />
 
-                      <img
-                        key={recapMoments[recapIndex % recapMoments.length].id}
-                        src={recapMoments[recapIndex % recapMoments.length].image}
-                        alt="Recap memory"
-                        className="absolute inset-0 w-full h-full object-cover"
-                        style={{
-                          animation: "recapPhotoFade 1000ms ease-in-out forwards",
-                        }}
-                      />
+                  <div className="absolute inset-0 bg-black/10" />
 
-                      <div className="absolute inset-0 bg-black/10" />
 
-                      <div className="absolute top-3 left-3 right-3 flex gap-1">
-                        {recapMoments.slice(0, 12).map((_, index) => (
-                          <div
-                            key={index}
-                            className={`h-0.5 flex-1 rounded-full ${index === recapIndex % recapMoments.length
-                              ? "bg-white"
-                              : "bg-white/30"
-                              }`}
-                          />
-                        ))}
-                      </div>
-
-                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent p-4 text-white">
-                        <p className="text-[10px] text-white/65">
-                          {formatDate(
-                            recapMoments[recapIndex % recapMoments.length]
-                              .createdAt
-                          )}
-                        </p>
-
-                        <p className="text-xs font-medium mt-0.5">
-                          {recapMoments[recapIndex % recapMoments.length].note ||
-                            "quiet moment"}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </>
+                </button>
               )}
 
-              {recapView === "treasures" && (
-                <>
-                  {treasuredMoments.length === 0 ? (
-                    <EmptyState text="No hearted memories yet." />
-                  ) : (
-                    <>
-                      <div className="flex-1 min-h-0 rounded-[1.8rem] overflow-hidden bg-white shadow-lg relative">
-                        <img
-                          src={
-                            treasuredMoments[
-                              recapIndex % treasuredMoments.length
-                            ].image
-                          }
-                          alt="Hearted memory"
-                          className="w-full h-full object-cover"
-                        />
+              <div className="rounded-2xl bg-[#FFFCF7] border border-[#D9E4EE] p-2 shrink-0">
+                <p className="text-[10px] font-medium text-[#708090] mb-1">
+                  Recap caption
+                </p>
 
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-4 text-white">
-                          <p className="text-xs font-medium">hearted</p>
-                          <p className="text-[10px] text-white/65 mt-0.5">
-                            {formatDate(
-                              treasuredMoments[
-                                recapIndex % treasuredMoments.length
-                              ].createdAt
-                            )}
-                          </p>
-                          <p className="text-[11px] text-white/75 mt-0.5">
-                            {treasuredMoments[
-                              recapIndex % treasuredMoments.length
-                            ].note || "no caption"}
-                          </p>
-                        </div>
-                      </div>
+                <input
+                  value={recapCaption}
+                  onChange={(event) => setRecapCaption(event.target.value)}
+                  placeholder="caption..."
+                  className="w-full rounded-2xl bg-[#EEF3F8] px-3 py-2 text-xs outline-none mb-1"
+                />
 
-                      <SlideControls
-                        onPrev={prevTreasure}
-                        onNext={nextTreasure}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-
-              {recapView === "folders" && (
-                <div className="flex-1 min-h-0 rounded-[1.8rem] bg-white border border-stone-100 shadow-sm p-3 overflow-hidden">
-                  <p className="text-xs font-medium mb-2">folders</p>
-
-                  {Object.keys(folders).length === 0 ? (
-                    <div className="h-full grid place-items-center text-center">
-                      <p className="text-xs text-stone-400">no folders yet</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                      {Object.entries(folders).map(([folder, items]) => (
-                        <button
-                          key={folder}
-                          className="rounded-2xl bg-stone-100 p-2 text-left h-28 relative overflow-hidden"
-                        >
-                          {items[0]?.image && (
-                            <img
-                              src={items[0].image}
-                              alt={folder}
-                              className="absolute inset-0 w-full h-full object-cover opacity-35"
-                            />
-                          )}
-
-                          <div className="relative z-10">
-                            <Folder size={15} />
-                            <p className="font-medium text-xs mt-1 capitalize">
-                              {folder}
-                            </p>
-                            <p className="text-[10px] text-stone-500">
-                              {items.length} memories
-                            </p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+                <textarea
+                  value={recapDescription}
+                  onChange={(event) => setRecapDescription(event.target.value)}
+                  placeholder="description..."
+                  rows={1}
+                  className="w-full rounded-2xl bg-[#EEF3F8] px-3 py-2 text-xs outline-none resize-none"
+                />
+              </div>
             </div>
           )}
 
           {page === "archive" && (
-            <div className="h-full flex flex-col gap-2">
-              <div className="rounded-2xl bg-white p-3 shadow-sm border border-stone-100 shrink-0">
-                <CalendarDays className="mb-1 text-stone-400" size={15} />
-                <h1 className="text-sm font-medium">calendar</h1>
-                <p className="text-[10px] text-stone-400">tap a day</p>
+            <div
+              className="h-full flex flex-col gap-2 relative"
+              onWheel={handleCalendarWheel}
+              onTouchStart={handleCalendarTouchStart}
+              onTouchEnd={handleCalendarTouchEnd}
+            >
+              <div className="rounded-2xl bg-[#FFFCF7] border border-[#D9E4EE] px-3 py-2 shadow-sm shrink-0">
+                <div className="grid grid-cols-[1fr_auto_92px] items-center gap-2">
+                  <p className="text-xs font-medium text-[#708090]">
+                    Calendar
+                  </p>
+
+                  <button
+                    onClick={() => setCalendarPickerOpen((current) => !current)}
+                    className="text-sm font-semibold text-[#5E6E82] rounded-full px-3 py-1 bg-[#EEF3F8]"
+                  >
+                    {calendarMonthLabel}
+                  </button>
+
+                  <div className="flex justify-end gap-1">
+  <button
+    onClick={() => {
+      setCalendarMonth(
+        (current) =>
+          new Date(current.getFullYear(), current.getMonth() - 1, 1)
+      );
+      setSelectedDay(1);
+      setArchiveIndex(0);
+    }}
+    className="h-7 px-2 rounded-full bg-[#EEF3F8] border border-[#D9E4EE] text-[#5E6E82] text-[10px]"
+  >
+    Prev
+  </button>
+
+  <button
+    onClick={() => {
+      setCalendarMonth(
+        (current) =>
+          new Date(current.getFullYear(), current.getMonth() + 1, 1)
+      );
+      setSelectedDay(1);
+      setArchiveIndex(0);
+    }}
+    className="h-7 px-2 rounded-full bg-[#EEF3F8] border border-[#D9E4EE] text-[#5E6E82] text-[10px]"
+  >
+    Next
+  </button>
+</div>
+</div>
+
+{calendarPickerOpen && (
+                  <div className="grid grid-cols-4 gap-1.5 mt-2">
+                    {Array.from({ length: 12 }, (_, index) => {
+                      const monthDate = new Date(calendarMonth.getFullYear(), index, 1);
+                      const isActive = index === calendarMonth.getMonth();
+
+                      return (
+                        <button
+                          key={index}
+                          onClick={() => {
+                            setCalendarMonth(
+                              new Date(calendarMonth.getFullYear(), index, 1)
+                            );
+                            setSelectedDay(1);
+                            setArchiveIndex(0);
+                            setCalendarPickerOpen(false);
+                          }}
+                          className={`rounded-full py-1.5 text-[10px] ${
+                            isActive
+                              ? "bg-[#8FAED0] text-white"
+                              : "bg-[#EEF3F8] text-[#5E6E82]"
+                          }`}
+                        >
+                          {monthDate.toLocaleDateString("en-US", {
+                            month: "short",
+                          })}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-7 gap-1 shrink-0">
-                {Array.from({ length: 31 }, (_, index) => {
+              <div className="grid grid-cols-7 gap-0.5 shrink-0">
+                {Array.from({ length: daysInCalendarMonth }, (_, index) => {
                   const day = index + 1;
-                  const hasMemory = savedMoments.some((moment) => {
-                    const date = new Date(moment.createdAt);
-                    return date.getDate() === day;
-                  });
 
                   return (
                     <button
                       key={day}
-                      onClick={() => selectDay(day)}
-                      className={`aspect-square rounded-xl text-[10px] relative ${selectedDay === day
-                        ? "bg-[#1c1c1e] text-white"
-                        : "bg-white text-stone-500"
-                        }`}
+                      onClick={() => {
+                        setSelectedDay(day);
+                        setArchiveIndex(0);
+                      }}
+                      className={`h-8 rounded-lg text-[9px] relative transition ${getDayClass(day)}`}
                     >
                       {day}
-                      {hasMemory && (
-                        <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-[#8aa9cc]" />
-                      )}
                     </button>
                   );
                 })}
               </div>
 
-              <div className="flex-1 min-h-0 rounded-[1.8rem] bg-white shadow-sm border border-stone-100 overflow-hidden flex flex-col">
-                {activeArchiveMoment ? (
-                  <>
-                    <div className="relative flex-1 min-h-0">
-                      <img
-                        src={activeArchiveMoment.image}
-                        alt="Archive memory"
-                        className="w-full h-full object-cover"
-                      />
+              <div className="flex-1 min-h-0 rounded-[1.8rem] bg-[#FFFCF7] shadow-sm border border-[#D9E4EE] overflow-hidden flex flex-col">
+                {archiveMoments.length > 0 ? (
+                  <button
+                    onClick={() =>
+                      openMemory(
+                        archiveMoments[archiveIndex % archiveMoments.length]
+                      )
+                    }
+                    className="relative flex-1 min-h-0 text-left"
+                  >
+                    <Media
+                      moment={archiveMoments[archiveIndex % archiveMoments.length]}
+                      className="absolute inset-0 w-full h-full object-contain"
+                      mode="cover"
+                    />
 
-                      <button
-                        onClick={prevArchive}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/75 grid place-items-center"
-                      >
-                        <ChevronLeft size={16} />
-                      </button>
+                    <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/45 to-transparent" />
 
-                      <button
-                        onClick={nextArchive}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/75 grid place-items-center"
-                      >
-                        <ChevronRight size={16} />
-                      </button>
-                    </div>
-
-                    <div className="p-3 shrink-0">
-                      <p className="text-xs font-medium">
-                        {activeArchiveMoment.treasured ? "hearted" : "saved"}
-                      </p>
-
-                      <p className="text-[10px] text-stone-400 mt-0.5">
-                        {formatDate(activeArchiveMoment.createdAt)}
-                      </p>
-
-                      {activeArchiveMoment.folder && (
-                        <p className="text-[10px] text-stone-400 mt-0.5">
-                          {activeArchiveMoment.folder}
-                        </p>
+                    <p className="absolute left-4 bottom-4 text-[10px] text-white/90">
+                      {formatDate(
+                        archiveMoments[archiveIndex % archiveMoments.length]
+                          .createdAt
                       )}
-
-                      <p className="text-[11px] text-stone-500 mt-0.5">
-                        {activeArchiveMoment.note || "no caption"}
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex-1 grid place-items-center p-4 text-center">
-                    <p className="text-xs text-stone-400">
-                      no memories for this day
                     </p>
-                  </div>
+                  </button>
+                ) : (
+                  <div className="flex-1" />
                 )}
               </div>
             </div>
           )}
         </section>
 
-        <nav className="absolute bottom-0 left-0 right-0 bg-[#f8f8f8]/90 backdrop-blur border-t border-stone-200 px-4 py-2">
-          <div className="grid grid-cols-3 gap-2">
+        {openMoment && (
+          <div className="absolute inset-0 z-30 bg-[#FFFDF9] flex flex-col">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[#D9E4EE] shrink-0">
+              <button
+                onClick={() => setOpenMoment(null)}
+                className="text-xs text-[#5E6E82]"
+              >
+                ? Back
+              </button>
+
+              <p className="text-[10px] text-[#A5AFB8]">
+                {formatDate(openMoment.createdAt)}
+              </p>
+            </div>
+
+            <div className="relative flex-1 min-h-0 bg-black">
+              <Media
+                moment={openMoment}
+                className="w-full h-full object-contain"
+                mode="contain"
+              />
+
+              {openMoment.caption && (
+                <div className="absolute left-3 right-3 bottom-3 rounded-2xl bg-black/35 backdrop-blur px-3 py-2">
+                  <p className="text-[11px] text-white/90 leading-snug">
+                    {openMoment.caption}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 border-t border-[#D9E4EE] bg-[#FFFDF9] shrink-0">
+              <textarea
+                value={captionDraft}
+                onChange={(event) => setCaptionDraft(event.target.value)}
+                onBlur={saveCaption}
+                placeholder="add a quiet caption..."
+                rows={2}
+                className="w-full rounded-2xl bg-[#EEF3F8] px-3 py-2.5 text-[11px] outline-none resize-none text-[#364252] placeholder:text-[#A5AFB8]"
+              />
+
+              <button
+                onClick={saveCaption}
+                className="mt-2 w-full rounded-2xl bg-[#8FAED0] text-white py-2 text-xs font-medium"
+              >
+                Save caption
+              </button>
+            </div>
+          </div>
+        )}
+
+        {inviteOpen && (
+          <div className="absolute inset-0 z-40 bg-black/20 backdrop-blur-[2px] flex items-end px-3 pb-24">
+            <div className="w-full rounded-[1.8rem] bg-[#FFFDF9] border border-[#D9E4EE] shadow-2xl p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-[#364252]">
+                    Add someone to Notice
+                  </p>
+                  <p className="text-[10px] text-[#A5AFB8] mt-0.5">
+                    invite them or make a private memory space
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setInviteOpen(false)}
+                  className="w-8 h-8 rounded-full bg-[#EEF3F8] grid place-items-center text-[#5E6E82]"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-[112px_1fr] gap-3 items-stretch">
+                <div className="rounded-2xl bg-[#EEF3F8] border border-[#D9E4EE] p-3 grid place-items-center">
+                  <div className="grid grid-cols-5 gap-1">
+                    {Array.from({ length: 25 }, (_, index) => (
+                      <div
+                        key={index}
+                        className={`w-2.5 h-2.5 rounded-[2px] ${
+                          [0,1,2,5,10,12,14,16,18,20,21,22,24].includes(index)
+                            ? "bg-[#5E6E82]"
+                            : "bg-white"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-[9px] text-[#8B97A4] mt-2">QR invite</p>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <input
+                    value={inviteFriendName}
+                    onChange={(event) => setInviteFriendName(event.target.value)}
+                    placeholder="friend name"
+                    className="w-full rounded-full bg-[#EEF3F8] border border-[#D9E4EE] px-4 py-2.5 text-xs outline-none text-[#364252]"
+                  />
+
+                  <button
+                    onClick={createInviteFriend}
+                    className="rounded-full bg-[#8FAED0] text-white py-2.5 text-xs font-medium"
+                  >
+                    Create memory space
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={copyInviteLink}
+                      className="rounded-full bg-[#EEF3F8] border border-[#D9E4EE] text-[#5E6E82] py-2 text-[11px] font-medium"
+                    >
+                      Copy link
+                    </button>
+
+                    <button
+                      onClick={messageInvite}
+                      className="rounded-full bg-[#EEF3F8] border border-[#D9E4EE] text-[#5E6E82] py-2 text-[11px] font-medium"
+                    >
+                      Message
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        <nav className="absolute bottom-0 left-0 right-0 bg-[#FFFDF9]/90 backdrop-blur border-t border-[#D9E4EE] px-4 py-2">
+          <div className="grid grid-cols-4 gap-2">
             <NavButton
               icon={<Home size={16} />}
               label="Review"
               active={page === "review"}
               onClick={() => setPage("review")}
+            />
+            <NavButton
+              icon={<Users size={16} />}
+              label="People"
+              active={page === "people"}
+              onClick={() => setPage("people")}
             />
             <NavButton
               icon={<Sparkles size={16} />}
@@ -1169,25 +1402,17 @@ function App() {
   );
 }
 
-function SlideControls({ onPrev, onNext }) {
+function TabButton({ label, active, onClick }) {
   return (
-    <div className="grid grid-cols-2 gap-2 shrink-0">
-      <button
-        onClick={onPrev}
-        className="rounded-2xl bg-white border border-stone-200 py-2.5 flex items-center justify-center gap-1 text-xs font-medium"
-      >
-        <ChevronLeft size={15} />
-        Prev
-      </button>
-
-      <button
-        onClick={onNext}
-        className="rounded-2xl bg-[#1c1c1e] text-white py-2.5 flex items-center justify-center gap-1 text-xs font-medium"
-      >
-        Next
-        <ChevronRight size={15} />
-      </button>
-    </div>
+    <button
+      onClick={onClick}
+      className={`rounded-2xl p-2 text-center border ${active
+          ? "bg-[#8FAED0] border-[#8FAED0] text-white"
+          : "bg-[#FFFCF7] border-[#D9E4EE] text-[#5E6E82]"
+        }`}
+    >
+      <p className="text-[10px] font-medium">{label}</p>
+    </button>
   );
 }
 
@@ -1196,8 +1421,8 @@ function NavButton({ icon, label, active, onClick }) {
     <button
       onClick={onClick}
       className={`rounded-2xl py-2 flex flex-col items-center gap-0.5 text-[10px] transition ${active
-        ? "bg-[#1c1c1e] text-white"
-        : "text-stone-400 hover:bg-stone-100"
+          ? "bg-[#8FAED0] text-white"
+          : "text-[#8B97A4] hover:bg-[#EEF3F8]"
         }`}
     >
       {icon}
@@ -1208,10 +1433,33 @@ function NavButton({ icon, label, active, onClick }) {
 
 function EmptyState({ text }) {
   return (
-    <div className="flex-1 rounded-[1.8rem] bg-white border border-stone-100 shadow-sm grid place-items-center p-4 text-center">
-      <p className="text-xs text-stone-400">{text}</p>
+    <div className="flex-1 rounded-[1.8rem] bg-[#FFFCF7] border border-[#D9E4EE] shadow-sm grid place-items-center p-4 text-center">
+      <p className="text-xs text-[#A5AFB8]">{text}</p>
     </div>
   );
 }
 
 export default App;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
